@@ -38,6 +38,14 @@ parser.add_argument(
     help="If defined, will write the values set to an animation CSV file that can be loaded on Matt's tree."
     "Save happens at the end when either sys.exit is called by the code or the UI is closed.",
 )
+parser.add_argument(
+    "--show-delay",
+    dest="show_delay",
+    type=float,
+    help="The amount of time the show method should take to run. "
+         "This emulates the behaviour of the real tree. Defaults to 1/30th of a second.",
+    default=1/60
+)
 
 
 def get_coords(path: str) -> List[Tuple[float, float, float]]:
@@ -61,6 +69,7 @@ def get_coords(path: str) -> List[Tuple[float, float, float]]:
 class NeoPixel(Thread):
     def __init__(self, _, pixel_count, *args, **kwargs):
         super().__init__()
+        self._pixel_count = pixel_count
         # the LED colours
         self._pixels_temp = self._pixels = [(0, 0, 0)] * pixel_count
         # the LED locations
@@ -78,6 +87,7 @@ class NeoPixel(Thread):
 
         # parse the CLI inputs
         parser_args, _ = parser.parse_known_args()
+        self._show_delay = parser_args.show_delay
         # Optional argument. The number of seconds to simulate. Exit after this amount of time.
         if parser_args.simulate_seconds is None:
             self._end_time = None
@@ -88,8 +98,10 @@ class NeoPixel(Thread):
             self.set_pixel_locations(get_coords(parser_args.coordinates_path))
         # Optional argument. The path to save the frame data to at exit.
         self._save_path = parser_args.animation_csv_save_path
-        # The stored frame data. Only used if animation_csv_save_path CLI option is set
+        # The stored frame data and times. Only used if animation_csv_save_path CLI option is set
         self._frame_data = []
+        self._frame_times = []
+        self._last_draw_time = None
         if self._save_path is not None:
             # register the csv save method when python exits
             atexit.register(self._save_animation_csv)
@@ -108,10 +120,10 @@ class NeoPixel(Thread):
             pass
         """
         coords = list(coords)
-        if len(coords) != len(self._pixels_temp):
+        if len(coords) != self._pixel_count:
             raise ValueError(
                 "The number of coordinates must equal the number of pixels.\n"
-                f"Expected {len(self._pixels_temp)} got {len(coords)}"
+                f"Expected {self._pixel_count} got {len(coords)}"
             )
         if not all(
                 len(c) == 3 and all(isinstance(a, (int, float)) for a in c)
@@ -132,6 +144,10 @@ class NeoPixel(Thread):
         )
 
     def show(self):
+        current_time = time.time()
+        if self._last_draw_time is not None:
+            self._frame_times.append(current_time-self._last_draw_time)
+        self._last_draw_time = current_time
         if self._exit:
             sys.exit(0)
         if self._led_init_warn:
@@ -140,9 +156,16 @@ class NeoPixel(Thread):
         self._show = True
         if self._save_path is not None:
             self._frame_data.append(self._pixels)
+        if self._show_delay > 0:
+            time.sleep(self._show_delay)
 
     def _save_animation_csv(self):
-        raise NotImplementedError
+        with open(self._save_path, "w") as f:
+            colour_header_names = ",".join(f"{channel}_{led}" for led in range(self._pixel_count) for channel in "RGB")
+            f.write(f"FRAME_TIME,{colour_header_names}\n")
+            for frame_time, frame in zip(self._frame_times, self._frame_data):
+                colour_data = ",".join(str(min(max(int(col*255), 0), 255)) for led in frame for col in led)
+                f.write(f"{frame_time},{colour_data}\n")
 
     def run(self):
         print("You can ignore the errors about threading as long as you are not also using matplotlib.")
