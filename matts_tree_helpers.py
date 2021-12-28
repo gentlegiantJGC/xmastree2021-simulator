@@ -60,6 +60,7 @@ class FrameManager:
 
     See template.py for a more full example.
     """
+
     def __init__(self, frame_time: float):
         self._frame_time = frame_time
         self._start_time = 0

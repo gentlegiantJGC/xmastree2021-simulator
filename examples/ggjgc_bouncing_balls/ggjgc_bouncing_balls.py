@@ -35,24 +35,31 @@ def bouncing_balls():
     ball_radius = 0.1 * tree_height
     speed = 0.2 * tree_height
 
-    ball_locations = [[random.uniform(axis_min, axis_max) for axis_min, axis_max in bounds] for _ in range(ball_count)]
+    ball_locations = [
+        [random.uniform(axis_min, axis_max) for axis_min, axis_max in bounds]
+        for _ in range(ball_count)
+    ]
     ball_velocities = []
     for _ in range(ball_count):
-        v = numpy.random.rand(3)-0.5
+        v = numpy.random.rand(3) - 0.5
         ball_velocities.append(speed * v / numpy.linalg.norm(v))
 
     def hue_to_grb(hue):
         rgb = hsv_to_rgb(hue, 1, 1)
         return 255 * rgb[1], 255 * rgb[0], 255 * rgb[2]
 
-    ball_colours = [hue_to_grb(i/ball_count) for i in range(ball_count)]
+    ball_colours = [hue_to_grb(i / ball_count) for i in range(ball_count)]
 
     while True:
         with FrameManager(frame_time):
             # find which ball each pixel is in (if any)
             for i, coord in enumerate(coords):
                 for ball_location, ball_colour in zip(ball_locations, ball_colours):
-                    if sum((bax-cax)**2 for bax, cax in zip(ball_location, coord))**0.5 < ball_radius:
+                    if (
+                        sum((bax - cax) ** 2 for bax, cax in zip(ball_location, coord))
+                        ** 0.5
+                        < ball_radius
+                    ):
                         pixels[i] = ball_colour
                         break
                 else:
@@ -63,9 +70,19 @@ def bouncing_balls():
             pixels.show()
 
             # find the new ball locations
-            for i, (ball_location, ball_velocity) in enumerate(zip(ball_locations, ball_velocities)):
-                ball_locations[i] = ball_location = [loc + vel * frame_time for loc, vel in zip(ball_location, ball_velocity)]
-                ball_velocities[i] = [vel if axis_min < loc < axis_max else -vel for loc, vel, (axis_min, axis_max) in zip(ball_location, ball_velocity, bounds)]
+            for i, (ball_location, ball_velocity) in enumerate(
+                zip(ball_locations, ball_velocities)
+            ):
+                ball_locations[i] = ball_location = [
+                    loc + vel * frame_time
+                    for loc, vel in zip(ball_location, ball_velocity)
+                ]
+                ball_velocities[i] = [
+                    vel if axis_min < loc < axis_max else -vel
+                    for loc, vel, (axis_min, axis_max) in zip(
+                        ball_location, ball_velocity, bounds
+                    )
+                ]
 
 
 if __name__ == "__main__":

@@ -43,8 +43,8 @@ parser.add_argument(
     dest="show_delay",
     type=float,
     help="The amount of time the show method should take to run. "
-         "This emulates the behaviour of the real tree. Defaults to 1/60th of a second.",
-    default=1/60
+    "This emulates the behaviour of the real tree. Defaults to 1/60th of a second.",
+    default=1 / 60,
 )
 
 
@@ -144,12 +144,9 @@ class NeoPixel(Thread):
                 f"Expected {self._pixel_count} got {len(coords)}"
             )
         if not all(
-                len(c) == 3 and all(isinstance(a, (int, float)) for a in c)
-                for c in coords
+            len(c) == 3 and all(isinstance(a, (int, float)) for a in c) for c in coords
         ):
-            raise ValueError(
-                "Coords must be of the form List[Tuple[int, int, int]]"
-            )
+            raise ValueError("Coords must be of the form List[Tuple[int, int, int]]")
         self._locations = list(zip(*coords))
         self._locations_changed = True
         self._led_init_warn = False
@@ -167,12 +164,14 @@ class NeoPixel(Thread):
     def show(self):
         current_time = time.time()
         if self._last_draw_time is not None:
-            self._frame_times.append(current_time-self._last_draw_time)
+            self._frame_times.append(current_time - self._last_draw_time)
         self._last_draw_time = current_time
         if self._exit:
             sys.exit(0)
         if self._led_init_warn:
-            print("The LED locations have not been set. These can be set via the CLI or by calling set_pixel_locations")
+            print(
+                "The LED locations have not been set. These can be set via the CLI or by calling set_pixel_locations"
+            )
         self._pixels = self._pixels_temp.copy()
         self._show = True
         if self._save_path is not None:
@@ -182,14 +181,24 @@ class NeoPixel(Thread):
 
     def _save_animation_csv(self):
         with open(self._save_path, "w") as f:
-            colour_header_names = ",".join(f"{channel}_{led}" for led in range(self._pixel_count) for channel in "RGB")
+            colour_header_names = ",".join(
+                f"{channel}_{led}"
+                for led in range(self._pixel_count)
+                for channel in "RGB"
+            )
             f.write(f"FRAME_TIME,{colour_header_names}\n")
             for frame_time, frame in zip(self._frame_times, self._frame_data):
-                colour_data = ",".join(str(min(max(int(col*255), 0), 255)) for led in frame for col in led)
+                colour_data = ",".join(
+                    str(min(max(int(col * 255), 0), 255))
+                    for led in frame
+                    for col in led
+                )
                 f.write(f"{frame_time*1000},{colour_data}\n")
 
     def run(self):
-        print("You can ignore the errors about threading as long as you are not also using matplotlib.")
+        print(
+            "You can ignore the errors about threading as long as you are not also using matplotlib."
+        )
         # create a figure
         fig = plt.figure()
         ax = fig.add_subplot(projection="3d")
@@ -214,5 +223,5 @@ class NeoPixel(Thread):
         plt.close(fig)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print("Simulator.py is not directly callable. See the readme for usage.")

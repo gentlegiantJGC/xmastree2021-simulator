@@ -58,9 +58,7 @@ def snow():
 
     # find the LEDs that are in the top third of the tree
     start_leds = [
-        led
-        for led, coord in enumerate(coords)
-        if coord[2] > max_y - tree_height / 3
+        led for led, coord in enumerate(coords) if coord[2] > max_y - tree_height / 3
     ]
 
     while True:
