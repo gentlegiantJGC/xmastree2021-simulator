@@ -13,7 +13,7 @@ import numpy
 from matts_tree_helpers import get_coords_pixels, FrameManager
 
 
-def closest_point():
+def bouncing_balls():
     # NOTE THE LEDS ARE GRB COLOUR (NOT RGB)
 
     # If you want to have user changeable values, they need to be entered from the command line
@@ -69,4 +69,4 @@ def closest_point():
 
 
 if __name__ == "__main__":
-    closest_point()
+    bouncing_balls()

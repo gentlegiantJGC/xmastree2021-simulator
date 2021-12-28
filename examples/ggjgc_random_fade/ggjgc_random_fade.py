@@ -38,19 +38,11 @@ def random_fade():
 
                 # calculate the colour for each pixel
                 for i in range(len(coords)):
-                    pixels[i] = (
+                    pixels[i] = tuple(
                         min(
-                            last_colours[i][0] * (1 - lerp) + next_colours[i][0] * lerp,
+                            last_colours[i][channel] * (1 - lerp) + next_colours[i][channel] * lerp,
                             255.0,
-                        ),
-                        min(
-                            last_colours[i][1] * (1 - lerp) + next_colours[i][1] * lerp,
-                            255.0,
-                        ),
-                        min(
-                            last_colours[i][2] * (1 - lerp) + next_colours[i][2] * lerp,
-                            255.0,
-                        ),
+                        ) for channel in range(3)
                     )
 
                 # use the show() option as rarely as possible as it takes ages

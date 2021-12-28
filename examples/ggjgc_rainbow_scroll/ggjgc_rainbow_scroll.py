@@ -23,7 +23,10 @@ def rainbow_scroll():
 
     # YOU CAN EDIT FROM HERE DOWN
 
-    speed = 0.2
+    y_coords = list(zip(*coords))[2]
+    max_y = max(y_coords)
+    min_y = min(y_coords)
+    speed = (max_y - min_y) * 0.03
 
     frame_time = 1 / 30
 
