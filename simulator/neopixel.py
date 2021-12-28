@@ -43,9 +43,20 @@ parser.add_argument(
     dest="show_delay",
     type=float,
     help="The amount of time the show method should take to run. "
-         "This emulates the behaviour of the real tree. Defaults to 1/30th of a second.",
+         "This emulates the behaviour of the real tree. Defaults to 1/60th of a second.",
     default=1/60
 )
+
+
+# Pixel color order constants
+RGB = "RGB"
+"""Red Green Blue"""
+GRB = "GRB"
+"""Green Red Blue"""
+RGBW = "RGBW"
+"""Red Green Blue White"""
+GRBW = "GRBW"
+"""Green Red Blue White"""
 
 
 def get_coords(path: str) -> List[Tuple[float, float, float]]:
@@ -67,9 +78,16 @@ def get_coords(path: str) -> List[Tuple[float, float, float]]:
 
 
 class NeoPixel(Thread):
-    def __init__(self, _, pixel_count, *args, **kwargs):
+    def __init__(self, _, pixel_count, *, pixel_order: str = "GRB", **kwargs):
         super().__init__()
         self._pixel_count = pixel_count
+        if pixel_order == "RGB":
+            self._channel_map = (0, 1, 2)
+        elif pixel_order == "GRB":
+            self._channel_map = (1, 0, 2)
+        else:
+            raise ValueError("pixel_order must be RGB or GRB")
+
         # the LED colours
         self._pixels_temp = self._pixels = [(0, 0, 0)] * pixel_count
         # the LED locations
@@ -136,12 +154,15 @@ class NeoPixel(Thread):
         self._locations_changed = True
         self._led_init_warn = False
 
+    @property
+    def n(self) -> int:
+        """
+        The number of neopixels in the chain (read-only)
+        """
+        return self._pixel_count
+
     def __setitem__(self, index, color):
-        self._pixels_temp[index] = (
-            color[1] / 255.0,
-            color[0] / 255.0,
-            color[2] / 255.0,
-        )
+        self._pixels_temp[index] = tuple(color[i] / 255.0 for i in self._channel_map)
 
     def show(self):
         current_time = time.time()
@@ -165,7 +186,7 @@ class NeoPixel(Thread):
             f.write(f"FRAME_TIME,{colour_header_names}\n")
             for frame_time, frame in zip(self._frame_times, self._frame_data):
                 colour_data = ",".join(str(min(max(int(col*255), 0), 255)) for led in frame for col in led)
-                f.write(f"{frame_time},{colour_data}\n")
+                f.write(f"{frame_time*1000},{colour_data}\n")
 
     def run(self):
         print("You can ignore the errors about threading as long as you are not also using matplotlib.")
