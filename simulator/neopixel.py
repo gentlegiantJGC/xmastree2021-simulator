@@ -1,12 +1,14 @@
-from typing import Iterable, Tuple, List
+from typing import Iterable, Tuple, List, Optional
 import sys
-from threading import Thread
 import argparse
 import os
 import json
 import csv
 import atexit
 import time
+
+from multiprocessing import Process, Queue
+import queue
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -17,35 +19,46 @@ matplotlib.use("TkAgg")
 # set the style
 plt.style.use("dark_background")
 
-# parser to parse the command line inputs
-parser = argparse.ArgumentParser(description="Simulate the neopixel interface.")
-parser.add_argument(
-    "--coordinates-path",
-    dest="coordinates_path",
-    type=str,
-    help="The path to the coordinate file in txt for csv format. Use this if the code does not set the coordinates.",
-)
-parser.add_argument(
-    "--simulate-seconds",
-    dest="simulate_seconds",
-    type=float,
-    help="Exit after this number of seconds if defined.",
-)
-parser.add_argument(
-    "--animation-csv-save-path",
-    dest="animation_csv_save_path",
-    type=str,
-    help="If defined, will write the values set to an animation CSV file that can be loaded on Matt's tree."
-    "Save happens at the end when either sys.exit is called by the code or the UI is closed.",
-)
-parser.add_argument(
-    "--show-delay",
-    dest="show_delay",
-    type=float,
-    help="The amount of time the show method should take to run. "
-    "This emulates the behaviour of the real tree. Defaults to 1/60th of a second.",
-    default=1 / 60,
-)
+
+def get_parser():
+    # parser to parse the command line inputs
+    parser = argparse.ArgumentParser(description="Simulate the neopixel interface.")
+    parser.add_argument(
+        "--coordinates-path",
+        dest="coordinates_path",
+        type=str,
+        help="The path to the coordinate file in txt for csv format. "
+             "Use this if the code does not set the coordinates.",
+    )
+    parser.add_argument(
+        "--simulate-seconds",
+        dest="simulate_seconds",
+        type=float,
+        help="Exit after this number of seconds if defined.",
+    )
+    parser.add_argument(
+        "--animation-csv-save-path",
+        dest="animation_csv_save_path",
+        type=str,
+        help="If defined, will write the values set to an animation CSV file that can be loaded on Matt's tree."
+        "Save happens at the end when either sys.exit is called by the code or the UI is closed.",
+    )
+    parser.add_argument(
+        "--show-delay",
+        dest="show_delay",
+        type=float,
+        help="The amount of time the show method should take to run. "
+        "This emulates the behaviour of the real tree. Defaults to 1/60th of a second.",
+        default=0,
+    )
+    parser.add_argument(
+        "--no-gui",
+        dest="gui",
+        action="store_false",
+        help="If true will show the GUI.",
+        default=True,
+    )
+    return parser
 
 
 # Pixel color order constants
@@ -77,8 +90,83 @@ def get_coords(path: str) -> List[Tuple[float, float, float]]:
     return coords
 
 
-class NeoPixel(Thread):
-    def __init__(self, _, pixel_count, *, pixel_order: str = "GRB", **kwargs):
+class Exit:
+    pass
+
+
+class Locations(list):
+    pass
+
+
+class Pixels(list):
+    pass
+
+
+def matplotlib_process(command_queue: Queue):
+    """Run matplotlib in a new process."""
+    # create a figure
+    fig = plt.figure()
+    ax = fig.add_subplot(projection="3d")
+
+    run = True
+
+    def exit_process(evt):
+        nonlocal run
+        run = False
+
+    # exit python when the figure is closed
+    fig.canvas.mpl_connect("close_event", exit_process)
+
+    pixels_changed = False
+    pixels = None
+    locations_changed = False
+    locations = None
+
+    while run:
+        while True:
+            try:
+                command = command_queue.get_nowait()
+            except queue.Empty:
+                break
+            else:
+                if isinstance(command, Exit):
+                    run = False
+                    break
+                elif isinstance(command, Locations):
+                    locations_changed = True
+                    locations = command
+                elif isinstance(command, Pixels):
+                    pixels_changed = True
+                    pixels = command
+                else:
+                    print(command)
+
+        if locations_changed:
+            ax.set_box_aspect([max(ax) - min(ax) for ax in locations])
+            locations_changed = False
+        if pixels_changed:
+            if locations is None:
+                print(
+                    "The LED locations have not been set. "
+                    "These can be set via the CLI or by calling set_pixel_locations"
+                )
+            else:
+                ax.cla()
+                ax.scatter(*locations, c=pixels)
+                pixels_changed = False
+
+        plt.pause(1 / 100_000)
+    plt.close(fig)
+
+
+class NeoPixel:
+    _pixel_count: int  # The number of pixels the devices has
+    _channel_map: Tuple[int, int, int]  # RGB indexes
+
+    _process: Optional[Process]  # The matplotlib process
+    _process_queue: Optional[Queue]  # A Queue used to send data to the matplotlib process
+
+    def __init__(self, _, pixel_count: int, *, pixel_order: str = "GRB", **kwargs):
         super().__init__()
         self._pixel_count = pixel_count
         if pixel_order == "RGB":
@@ -89,43 +177,47 @@ class NeoPixel(Thread):
             raise ValueError("pixel_order must be RGB or GRB")
 
         # the LED colours
-        self._pixels_temp = self._pixels = [(0, 0, 0)] * pixel_count
-        # the LED locations
-        self._locations = [[0] * pixel_count] * 3
-        # have the LED locations been set?
-        self._led_init_warn = True
-
-        # Thread variables
-        # track if the locations have changed so that the UI thread can update the view
-        self._locations_changed = False
-        # track if show has been called so the thread can push the changes
-        self._show = True
-        # True when the thread has finished so we can call sys.exit(0)
-        self._exit = False
+        self._pixels = [(0, 0, 0)] * pixel_count
 
         # parse the CLI inputs
-        parser_args, _ = parser.parse_known_args()
+        parser_args, _ = get_parser().parse_known_args()
+
+        # The delay time used in the show method
         self._show_delay = parser_args.show_delay
-        # Optional argument. The number of seconds to simulate. Exit after this amount of time.
-        if parser_args.simulate_seconds is None:
-            self._end_time = None
-        else:
-            self._end_time = time.time() + parser_args.simulate_seconds
-        # Optional argument. Path to the coordinates file. Useful if the python script does not set it.
-        if parser_args.coordinates_path is not None:
-            self.set_pixel_locations(get_coords(parser_args.coordinates_path))
+
         # Optional argument. The path to save the frame data to at exit.
         self._save_path = parser_args.animation_csv_save_path
         # The stored frame data and times. Only used if animation_csv_save_path CLI option is set
         self._frame_data = []
         self._frame_times = []
         self._last_draw_time = None
+
+        # Set up the animation save if requested
         if self._save_path is not None:
             # register the csv save method when python exits
             atexit.register(self._save_animation_csv)
 
-        # start the UI thread
-        self.start()
+        # Enable the GUI if required
+        self._gui = parser_args.gui
+        if self._gui:
+            # start the UI thread
+            self._process_queue = Queue()
+            self._process = Process(target=matplotlib_process, args=(self._process_queue,))
+            self._process.start()
+        else:
+            self._process_queue = None
+            self._process = None
+            print("Running in no GUI mode.")
+
+        # Optional argument. Path to the coordinates file. Useful if the python script does not set it.
+        if parser_args.coordinates_path is not None:
+            self.set_pixel_locations(get_coords(parser_args.coordinates_path))
+
+        # Optional argument. The number of seconds to simulate. Exit after this amount of time.
+        if parser_args.simulate_seconds is not None:
+            self._end_time = time.perf_counter() + parser_args.simulate_seconds
+        else:
+            self._end_time = None
 
     def set_pixel_locations(self, coords: Iterable[Tuple[float, float, float]]):
         """
@@ -147,9 +239,8 @@ class NeoPixel(Thread):
             len(c) == 3 and all(isinstance(a, (int, float)) for a in c) for c in coords
         ):
             raise ValueError("Coords must be of the form List[Tuple[int, int, int]]")
-        self._locations = list(zip(*coords))
-        self._locations_changed = True
-        self._led_init_warn = False
+        if self._process_queue is not None:
+            self._process_queue.put_nowait(Locations(zip(*coords)))
 
     @property
     def n(self) -> int:
@@ -159,25 +250,48 @@ class NeoPixel(Thread):
         return self._pixel_count
 
     def __setitem__(self, index, color):
-        self._pixels_temp[index] = tuple(color[i] / 255.0 for i in self._channel_map)
+        self._pixels[index] = tuple(color[i] / 255.0 for i in self._channel_map)
 
     def show(self):
-        current_time = time.time()
-        if self._last_draw_time is not None:
-            self._frame_times.append(current_time - self._last_draw_time)
-        self._last_draw_time = current_time
-        if self._exit:
+        current_time = time.perf_counter()
+
+        # check if we should exit
+        if self._end_time is not None and current_time > self._end_time:
+            if self._process is not None:
+                if self._process.is_alive():
+                    # if the matplotlib process is running then kill it
+                    self._process_queue.put_nowait(Exit())
+                    self._process.join()
             sys.exit(0)
-        if self._led_init_warn:
-            print(
-                "The LED locations have not been set. These can be set via the CLI or by calling set_pixel_locations"
-            )
-        self._pixels = self._pixels_temp.copy()
-        self._show = True
+        elif self._process is not None and not self._process.is_alive():
+            # The matplotlib process has exited. We should exit.
+            if self._save_path is not None:
+                # There is an issue where if the process is exited it will get stuck. This fixes it.
+                atexit.unregister(self._save_animation_csv)
+                self._save_animation_csv()
+            # There is sometimes an error that gets printed to the console. I am not sure how to fix this
+            # https://stackoverflow.com/questions/26692284/how-to-prevent-brokenpipeerror-when-doing-a-flush-in-python
+            sys.stderr.close()
+            sys.exit(0)
+
+        # update the save data if we are storing that.
         if self._save_path is not None:
-            self._frame_data.append(self._pixels)
-        if self._show_delay > 0:
-            time.sleep(self._show_delay)
+            # update the frame times
+            if self._last_draw_time is not None:
+                self._frame_times.append(current_time - self._last_draw_time)
+            self._last_draw_time = current_time
+            # update the frame data
+            self._frame_data.append(self._pixels.copy())
+
+        # give the pixel data to the process
+        if self._process_queue is not None:
+            self._process_queue.put_nowait(Pixels(self._pixels))
+
+        # sleep if required
+        end_time = current_time + self._show_delay
+        while time.perf_counter() < end_time:
+            # time.sleep has inaccuracies on some platforms
+            pass
 
     def _save_animation_csv(self):
         with open(self._save_path, "w") as f:
@@ -193,34 +307,7 @@ class NeoPixel(Thread):
                     for led in frame
                     for col in led
                 )
-                f.write(f"{frame_time*1000},{colour_data}\n")
-
-    def run(self):
-        print(
-            "You can ignore the errors about threading as long as you are not also using matplotlib."
-        )
-        # create a figure
-        fig = plt.figure()
-        ax = fig.add_subplot(projection="3d")
-
-        def exit_(evt):
-            self._exit = True
-
-        # exit python when the figure is closed
-        fig.canvas.mpl_connect("close_event", exit_)
-
-        while not self._exit:
-            if self._show:
-                ax.cla()
-                ax.scatter(*self._locations, c=self._pixels)
-                self._show = False
-            if self._locations_changed:
-                ax.set_box_aspect([max(ax) - min(ax) for ax in self._locations])
-                self._locations_changed = False
-            plt.pause(1 / 100_000)
-            if self._end_time is not None and time.time() > self._end_time:
-                self._exit = True
-        plt.close(fig)
+                f.write(f"{round(frame_time*1000, 3)},{colour_data}\n")
 
 
 if __name__ == "__main__":

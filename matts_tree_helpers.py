@@ -63,18 +63,15 @@ class FrameManager:
 
     def __init__(self, frame_time: float):
         self._frame_time = frame_time
-        self._start_time = 0
+        self._end_time = 0
 
     def __enter__(self):
-        self._start_time = time.time()
+        self._end_time = time.perf_counter() + self._frame_time
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         # If the frame was processed in less time than frame_time then sleep for a bit
-        dt = max(
-            0.0, self._frame_time - (time.time() - self._start_time)
-        )  # total frame time minus the elapsed time for the frame
-        if dt:
-            time.sleep(dt)
+        while time.perf_counter() < self._end_time:
+            time.sleep(0)
 
 
 if __name__ == "__main__":
