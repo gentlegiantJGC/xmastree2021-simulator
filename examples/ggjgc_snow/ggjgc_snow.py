@@ -31,7 +31,7 @@ def snow():
 
     colour = (255, 255, 255)
 
-    frame_time = 1 / 10
+    frame_time = 1 / 7
 
     # The max distance that should be considered a neighbour LED
     max_dist = 0.2 * tree_height
@@ -45,16 +45,20 @@ def snow():
     # precompute the closest LEDs below each led
     for led1, coord1 in enumerate(coords):
         # for each LED
-        next_leds[led1] = leds = []
+        led_data = []
         for led2, coord2 in enumerate(coords):
-            if (
+            if coord2[2] < coord1[2]:
                 # if it is below the current LED
-                coord2[2] < coord1[2]
-                # and within the max distance
-                and sum((c2 - c1) ** 2 for c1, c2 in zip(coord1, coord2)) ** 0.5
-                < max_dist
-            ):
-                leds.append(led2)
+                dist = sum((c2 - c1) ** 2 for c1, c2 in zip(coord1, coord2)) ** 0.5
+                if dist < max_dist:
+                    # if within the max distance
+                    led_data.append((dist, led2))
+        led_data = sorted(led_data, key=lambda x: x[0])[:5]
+        if led_data:
+            _, leds = zip(*led_data)
+        else:
+            leds = []
+        next_leds[led1] = leds
 
     # find the LEDs that are in the top third of the tree
     start_leds = [
